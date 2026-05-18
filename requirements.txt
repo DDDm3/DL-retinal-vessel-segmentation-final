@@ -1,5 +1,2 @@
-# Add Python dependencies here.
-# Example:
-# torch
-# torchvision
-# numpy
+torch
+transformers
