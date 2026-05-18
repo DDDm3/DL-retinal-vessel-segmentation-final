@@ -3,6 +3,7 @@ import os
 import tqdm
 import torch
 EXPORT_BASE = "../Drive_processed_dataset"
+EXPORT_BASE = "../CHASEDB1_processed_dataset"
 
 def normalize_mask(mask, **kwargs):
     return mask.astype(np.float32) / 255.0
@@ -17,7 +18,28 @@ def tensor_to_image(tensor):
     img = np.clip(img, 0, 1)
     return img
 
-def export_dataset_to_disk(dataset, split_name):
+def export_dataset_to_disk_chase(dataset, split_name, has_manual_2=False):
+    print(f"Exporting {split_name} ({len(dataset)} samples)...")
+
+    split_dir = os.path.join(EXPORT_BASE, split_name)
+    os.makedirs(split_dir, exist_ok=True)
+
+    for i in tqdm(range(len(dataset))):
+        sample = dataset[i]
+
+        save_dict = {
+            "image":    sample[0],
+            "manual_1": sample[1],
+        }
+
+        # tập Test
+        if has_manual_2:
+            save_dict["manual_2"] = sample[2]
+
+        save_path = os.path.join(split_dir, f"sample_{i}.pt")
+        torch.save(save_dict, save_path)
+
+def export_dataset_to_disk_drive(dataset, split_name):
     print(f"Exporting {split_name} ({len(dataset)} samples)...")
     
     split_dir = os.path.join(EXPORT_BASE, split_name)
@@ -36,6 +58,5 @@ def export_dataset_to_disk(dataset, split_name):
         if len(sample) == 4:
             save_dict["manual_2"] = sample[3]
             
-        # Lưu file dưới dạng .pt (PyTorch Data)
         save_path = os.path.join(split_dir, f"sample_{i}.pt")
         torch.save(save_dict, save_path)
