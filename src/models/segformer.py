@@ -27,16 +27,16 @@ class SegFormerB0(nn.Module):
         ignore_mismatched_sizes: bool = True,
     ) -> None:
         super().__init__()
-        config = SegformerConfig.from_pretrained(pretrained_model_name)
-        config.num_labels = num_labels
-
         if pretrained:
+            config = SegformerConfig.from_pretrained(pretrained_model_name)
+            config.num_labels = num_labels
             self.model = SegformerForSemanticSegmentation.from_pretrained(
                 pretrained_model_name,
                 config=config,
                 ignore_mismatched_sizes=ignore_mismatched_sizes,
             )
         else:
+            config = SegformerConfig(num_labels=num_labels)
             self.model = SegformerForSemanticSegmentation(config)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
