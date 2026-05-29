@@ -33,3 +33,7 @@ Thumbs.db
 data/
 checkpoints/
 results/
+
+# Markdown files and folder
+*.md
+md/
