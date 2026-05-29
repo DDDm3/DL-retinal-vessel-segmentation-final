@@ -1,7 +1,8 @@
 """Model exports."""
 
 from .attention_unet import AttentionUNet
+from .deeplabv3_resnet50 import DeepLabV3ResNet50Binary
 from .segformer import SegFormerB0
 from .unet import UNet
 
-__all__ = ["AttentionUNet", "SegFormerB0", "UNet"]
+__all__ = ["AttentionUNet", "DeepLabV3ResNet50Binary", "SegFormerB0", "UNet"]
