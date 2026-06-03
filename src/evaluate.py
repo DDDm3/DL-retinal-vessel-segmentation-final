@@ -15,13 +15,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-<<<<<<< HEAD
-from src.models import AttentionUNet, SegFormerB0, UNet  # noqa: E402
-from src.utils.metrics import dice_score, iou_score  # noqa: E402
-
-
-TensorPair = Tuple[torch.Tensor, torch.Tensor]
-=======
 from src.models import AttentionUNet, DeepLabV3ResNet50Binary, SegFormerB0, UNet  # noqa: E402
 from src.utils.metrics import accuracy_score, dice_score, iou_score  # noqa: E402
 
@@ -32,7 +25,6 @@ DEFAULT_CHECKPOINTS = {
     "deeplabv3_resnet50": Path("src/models/best_deeplabv3_resnet50.pth"),
 }
 COMPARISON_MODELS = ("segformer_b0", "deeplabv3_resnet50")
->>>>>>> 6117f20 ([Issue-13-15] Complete metrics, evaluation workflow and DeepLabV3 baseline comparison)
 
 
 def parse_args() -> argparse.Namespace:
@@ -42,9 +34,6 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--model",
-<<<<<<< HEAD
-        choices=("unet", "attention_unet", "segformer_b0"),
-=======
         choices=(
             "unet",
             "attention_unet",
@@ -52,21 +41,14 @@ def parse_args() -> argparse.Namespace:
             "deeplabv3_resnet50",
             "all",
         ),
->>>>>>> 6117f20 ([Issue-13-15] Complete metrics, evaluation workflow and DeepLabV3 baseline comparison)
         required=True,
         help="Model architecture to evaluate.",
     )
     parser.add_argument(
         "--checkpoint",
-<<<<<<< HEAD
-        required=True,
-        type=Path,
-        help="Path to a .pth checkpoint file.",
-=======
         required=False,
         type=Path,
         help="Path to a .pth checkpoint file. Not needed when --model all.",
->>>>>>> 6117f20 ([Issue-13-15] Complete metrics, evaluation workflow and DeepLabV3 baseline comparison)
     )
     parser.add_argument(
         "--data",
@@ -125,11 +107,8 @@ def build_model(model_name: str) -> nn.Module:
         model = AttentionUNet()
     elif model_name == "segformer_b0":
         model = SegFormerB0(pretrained=False)
-<<<<<<< HEAD
-=======
     elif model_name == "deeplabv3_resnet50":
         model = DeepLabV3ResNet50Binary(pretrained_backbone=False)
->>>>>>> 6117f20 ([Issue-13-15] Complete metrics, evaluation workflow and DeepLabV3 baseline comparison)
     else:
         raise ValueError(f"Unsupported model '{model_name}'.")
 
@@ -357,20 +336,13 @@ def evaluate_model(
     device: torch.device,
     threshold: float = 0.5,
 ) -> Dict[str, float]:
-<<<<<<< HEAD
-    """Evaluate a model and return average Dice and IoU over all batches."""
-=======
     """Evaluate a model and return average Dice, IoU, and accuracy."""
->>>>>>> 6117f20 ([Issue-13-15] Complete metrics, evaluation workflow and DeepLabV3 baseline comparison)
     model.to(device)
     model.eval()
 
     dice_scores: List[float] = []
     iou_scores: List[float] = []
-<<<<<<< HEAD
-=======
     accuracy_scores: List[float] = []
->>>>>>> 6117f20 ([Issue-13-15] Complete metrics, evaluation workflow and DeepLabV3 baseline comparison)
 
     with torch.no_grad():
         for images, masks in dataloader:
@@ -381,10 +353,7 @@ def evaluate_model(
 
             dice_scores.append(dice_score(outputs, masks, threshold=threshold))
             iou_scores.append(iou_score(outputs, masks, threshold=threshold))
-<<<<<<< HEAD
-=======
             accuracy_scores.append(accuracy_score(outputs, masks, threshold=threshold))
->>>>>>> 6117f20 ([Issue-13-15] Complete metrics, evaluation workflow and DeepLabV3 baseline comparison)
 
     if not dice_scores:
         raise ValueError("No batches were evaluated. Check the dataset and batch size.")
@@ -392,10 +361,7 @@ def evaluate_model(
     return {
         "dice": sum(dice_scores) / len(dice_scores),
         "iou": sum(iou_scores) / len(iou_scores),
-<<<<<<< HEAD
-=======
         "accuracy": sum(accuracy_scores) / len(accuracy_scores),
->>>>>>> 6117f20 ([Issue-13-15] Complete metrics, evaluation workflow and DeepLabV3 baseline comparison)
     }
 
 
@@ -407,16 +373,6 @@ def format_model_name(model_name: str) -> str:
         return "AttentionUNet"
     if model_name == "segformer_b0":
         return "SegFormer-B0"
-<<<<<<< HEAD
-    return model_name
-
-
-def main() -> None:
-    """Run model evaluation from command-line arguments."""
-    args = parse_args()
-    if not args.checkpoint.exists():
-        raise FileNotFoundError(f"Checkpoint file not found: {args.checkpoint}")
-=======
     if model_name == "deeplabv3_resnet50":
         return "DeepLabV3-ResNet50"
     return model_name
@@ -457,17 +413,10 @@ def evaluate_one_model(
 def main() -> None:
     """Run model evaluation from command-line arguments."""
     args = parse_args()
->>>>>>> 6117f20 ([Issue-13-15] Complete metrics, evaluation workflow and DeepLabV3 baseline comparison)
     if not args.data.exists():
         raise FileNotFoundError(f"Dataset file not found: {args.data}")
 
     device = resolve_device(args.device)
-<<<<<<< HEAD
-    model = build_model(args.model)
-
-    load_checkpoint(model, args.checkpoint, device)
-=======
->>>>>>> 6117f20 ([Issue-13-15] Complete metrics, evaluation workflow and DeepLabV3 baseline comparison)
     dataset = load_test_dataset(args.data)
     dataloader = DataLoader(
         dataset,
@@ -476,10 +425,6 @@ def main() -> None:
         num_workers=args.num_workers,
     )
 
-<<<<<<< HEAD
-    results = evaluate_model(
-        model=model,
-=======
     if args.model == "all":
         for index, model_name in enumerate(COMPARISON_MODELS):
             checkpoint_path = DEFAULT_CHECKPOINTS[model_name]
@@ -501,22 +446,11 @@ def main() -> None:
     results = evaluate_one_model(
         model_name=args.model,
         checkpoint_path=args.checkpoint,
->>>>>>> 6117f20 ([Issue-13-15] Complete metrics, evaluation workflow and DeepLabV3 baseline comparison)
         dataloader=dataloader,
         device=device,
         threshold=args.threshold,
     )
-<<<<<<< HEAD
-
-    print("Evaluation Results")
-    print(f"Model: {format_model_name(args.model)}")
-    print(f"Checkpoint: {args.checkpoint}")
-    print()
-    print(f"Dice Score: {results['dice']:.4f}")
-    print(f"IoU Score : {results['iou']:.4f}")
-=======
     print_results(args.model, args.checkpoint, results)
->>>>>>> 6117f20 ([Issue-13-15] Complete metrics, evaluation workflow and DeepLabV3 baseline comparison)
 
 
 if __name__ == "__main__":
