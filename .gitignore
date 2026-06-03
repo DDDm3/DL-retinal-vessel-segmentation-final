@@ -33,10 +33,11 @@ Thumbs.db
 data/
 checkpoints/
 results/
+outputs/predictions/
 
 # Markdown files and folder
 *.md
 md/
 
 dataset/drive_test_dataset.pt
-src/model/best_deeplabv3_resnet50.pth
+src/models/best_deeplabv3_resnet50.pth
