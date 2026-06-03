@@ -37,3 +37,6 @@ results/
 # Markdown files and folder
 *.md
 md/
+
+dataset/drive_test_dataset.pt
+src/model/best_deeplabv3_resnet50.pth

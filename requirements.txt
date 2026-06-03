@@ -1,2 +1,6 @@
 torch
-transformers
+<<<<<<< HEAD
+=======
+torchvision
+>>>>>>> 6117f20 ([Issue-13-15] Complete metrics, evaluation workflow and DeepLabV3 baseline comparison)
+transformers<5

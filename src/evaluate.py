@@ -1,6 +1,523 @@
-"""Evaluation routines."""
+"""Evaluation entry point for binary retinal vessel segmentation models."""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Sequence, Tuple
+
+import torch
+from torch import nn
+from torch.utils.data import DataLoader, TensorDataset
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+<<<<<<< HEAD
+from src.models import AttentionUNet, SegFormerB0, UNet  # noqa: E402
+from src.utils.metrics import dice_score, iou_score  # noqa: E402
 
 
-def evaluate_model() -> None:
-    """Placeholder for evaluation logic."""
-    pass
+TensorPair = Tuple[torch.Tensor, torch.Tensor]
+=======
+from src.models import AttentionUNet, DeepLabV3ResNet50Binary, SegFormerB0, UNet  # noqa: E402
+from src.utils.metrics import accuracy_score, dice_score, iou_score  # noqa: E402
+
+
+TensorPair = Tuple[torch.Tensor, torch.Tensor]
+DEFAULT_CHECKPOINTS = {
+    "segformer_b0": Path("src/models/best_segformer_b0.pth"),
+    "deeplabv3_resnet50": Path("src/models/best_deeplabv3_resnet50.pth"),
+}
+COMPARISON_MODELS = ("segformer_b0", "deeplabv3_resnet50")
+>>>>>>> 6117f20 ([Issue-13-15] Complete metrics, evaluation workflow and DeepLabV3 baseline comparison)
+
+
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments for model evaluation."""
+    parser = argparse.ArgumentParser(
+        description="Evaluate segmentation models for retinal vessel segmentation."
+    )
+    parser.add_argument(
+        "--model",
+<<<<<<< HEAD
+        choices=("unet", "attention_unet", "segformer_b0"),
+=======
+        choices=(
+            "unet",
+            "attention_unet",
+            "segformer_b0",
+            "deeplabv3_resnet50",
+            "all",
+        ),
+>>>>>>> 6117f20 ([Issue-13-15] Complete metrics, evaluation workflow and DeepLabV3 baseline comparison)
+        required=True,
+        help="Model architecture to evaluate.",
+    )
+    parser.add_argument(
+        "--checkpoint",
+<<<<<<< HEAD
+        required=True,
+        type=Path,
+        help="Path to a .pth checkpoint file.",
+=======
+        required=False,
+        type=Path,
+        help="Path to a .pth checkpoint file. Not needed when --model all.",
+>>>>>>> 6117f20 ([Issue-13-15] Complete metrics, evaluation workflow and DeepLabV3 baseline comparison)
+    )
+    parser.add_argument(
+        "--data",
+        required=True,
+        type=Path,
+        help="Path to a .pt test dataset.",
+    )
+    parser.add_argument(
+        "--batch-size",
+        default=4,
+        type=int,
+        help="Evaluation batch size.",
+    )
+    parser.add_argument(
+        "--threshold",
+        default=0.5,
+        type=float,
+        help="Threshold used to binarize predictions.",
+    )
+    parser.add_argument(
+        "--device",
+        default="auto",
+        help="Device to use: auto, cpu, cuda, or a torch device string.",
+    )
+    parser.add_argument(
+        "--num-workers",
+        default=0,
+        type=int,
+        help="DataLoader worker count. Default 0 is Windows-friendly.",
+    )
+
+    return parser.parse_args()
+
+
+def resolve_device(device_arg: str) -> torch.device:
+    """Resolve a user-provided device argument to a torch device."""
+    if device_arg == "auto":
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    device = torch.device(device_arg)
+    if device.type == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA was requested but is not available.")
+
+    return device
+
+
+def build_model(model_name: str) -> nn.Module:
+    """Instantiate the selected model and validate that it is runnable."""
+    if model_name == "unet":
+        # UNet evaluation requires a trained checkpoint, which is not currently
+        # included in the repository.
+        model = UNet()
+    elif model_name == "attention_unet":
+        # AttentionUNet evaluation requires a trained checkpoint, which is not
+        # currently included in the repository.
+        model = AttentionUNet()
+    elif model_name == "segformer_b0":
+        model = SegFormerB0(pretrained=False)
+<<<<<<< HEAD
+=======
+    elif model_name == "deeplabv3_resnet50":
+        model = DeepLabV3ResNet50Binary(pretrained_backbone=False)
+>>>>>>> 6117f20 ([Issue-13-15] Complete metrics, evaluation workflow and DeepLabV3 baseline comparison)
+    else:
+        raise ValueError(f"Unsupported model '{model_name}'.")
+
+    if not isinstance(model, nn.Module):
+        raise NotImplementedError(
+            f"{model.__class__.__name__} is not implemented as torch.nn.Module yet. "
+            "Complete the model class before running evaluation."
+        )
+    if type(model).forward is nn.Module.forward:
+        raise NotImplementedError(
+            f"{model.__class__.__name__}.forward() is not implemented yet. "
+            "Complete the model forward pass before running evaluation."
+        )
+
+    return model
+
+
+def load_checkpoint(model: nn.Module, checkpoint_path: Path, device: torch.device) -> None:
+    """Load model weights from a checkpoint file."""
+    if not checkpoint_path.exists():
+        raise FileNotFoundError(f"Checkpoint file not found: {checkpoint_path}")
+
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    state_dict = extract_state_dict(checkpoint)
+
+    load_state_dict_robust(model, state_dict)
+
+
+def extract_state_dict(checkpoint: Any) -> Dict[str, torch.Tensor]:
+    """Extract a state_dict from common checkpoint formats."""
+    if isinstance(checkpoint, dict):
+        for key in ("state_dict", "model_state_dict", "model"):
+            if key in checkpoint and isinstance(checkpoint[key], dict):
+                return checkpoint[key]
+
+        if all(isinstance(key, str) for key in checkpoint.keys()):
+            return checkpoint
+
+    raise ValueError(
+        "Unsupported checkpoint format. Expected a state_dict or a dict "
+        "containing 'state_dict', 'model_state_dict', or 'model'."
+    )
+
+
+def load_state_dict_robust(
+    model: nn.Module,
+    state_dict: Dict[str, torch.Tensor],
+) -> None:
+    """Load a state_dict while handling common wrapper key prefixes."""
+    candidate_state_dicts = [
+        state_dict,
+        strip_prefix_from_state_dict(state_dict, "module."),
+        strip_prefix_from_state_dict(state_dict, "_orig_mod."),
+        add_prefix_to_state_dict(state_dict, "model."),
+    ]
+
+    errors: List[str] = []
+    for candidate in candidate_state_dicts:
+        try:
+            model.load_state_dict(candidate)
+            return
+        except RuntimeError as exc:
+            errors.append(str(exc))
+
+    raise RuntimeError(
+        "Could not load checkpoint into the selected model. The checkpoint may "
+        "belong to a different architecture or use incompatible layer names. "
+        f"Last load error: {errors[-1]}"
+    )
+
+
+def strip_prefix_from_state_dict(
+    state_dict: Dict[str, torch.Tensor],
+    prefix: str,
+) -> Dict[str, torch.Tensor]:
+    """Remove a prefix from all state_dict keys when present."""
+    return {
+        key[len(prefix) :] if key.startswith(prefix) else key: value
+        for key, value in state_dict.items()
+    }
+
+
+def add_prefix_to_state_dict(
+    state_dict: Dict[str, torch.Tensor],
+    prefix: str,
+) -> Dict[str, torch.Tensor]:
+    """Add a prefix to keys that do not already have it."""
+    return {
+        key if key.startswith(prefix) else f"{prefix}{key}": value
+        for key, value in state_dict.items()
+    }
+
+
+def _as_tensor(value: Any, name: str) -> torch.Tensor:
+    """Convert a dataset value to a torch tensor."""
+    if isinstance(value, torch.Tensor):
+        return value
+
+    try:
+        return torch.as_tensor(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Could not convert {name} to a torch.Tensor.") from exc
+
+
+def _normalize_image_mask_pair(image: Any, mask: Any) -> TensorPair:
+    """Convert one image/mask pair to float tensors with channel dimensions."""
+    image_tensor = _as_tensor(image, "image").float()
+    mask_tensor = _as_tensor(mask, "mask").float()
+
+    if image_tensor.dim() == 2:
+        image_tensor = image_tensor.unsqueeze(0)
+    if mask_tensor.dim() == 2:
+        mask_tensor = mask_tensor.unsqueeze(0)
+
+    if image_tensor.dim() != 3:
+        raise ValueError(
+            f"Each image must have shape [C, H, W] or [H, W], got "
+            f"{tuple(image_tensor.shape)}."
+        )
+    if mask_tensor.dim() != 3:
+        raise ValueError(
+            f"Each mask must have shape [1, H, W] or [H, W], got "
+            f"{tuple(mask_tensor.shape)}."
+        )
+    if mask_tensor.size(0) != 1:
+        raise ValueError(f"Each mask must have one channel, got {mask_tensor.size(0)}.")
+
+    return image_tensor, mask_tensor
+
+
+def _dataset_from_pairs(samples: Sequence[Any]) -> TensorDataset:
+    """Build a TensorDataset from a sequence of image/mask samples."""
+    images: List[torch.Tensor] = []
+    masks: List[torch.Tensor] = []
+
+    for index, sample in enumerate(samples):
+        if isinstance(sample, dict):
+            image = _get_first_existing(sample, ("image", "images", "x", "input"))
+            mask = _get_first_existing(sample, ("mask", "masks", "y", "target", "label"))
+        elif isinstance(sample, (list, tuple)) and len(sample) >= 2:
+            image, mask = sample[0], sample[1]
+        else:
+            raise ValueError(
+                "Unsupported sample format at index "
+                f"{index}. Expected (image, mask) or a dict with image/mask keys."
+            )
+
+        image_tensor, mask_tensor = _normalize_image_mask_pair(image, mask)
+        images.append(image_tensor)
+        masks.append(mask_tensor)
+
+    if not images:
+        raise ValueError("Dataset is empty.")
+
+    return TensorDataset(torch.stack(images), torch.stack(masks))
+
+
+def _get_first_existing(data: Dict[str, Any], keys: Iterable[str]) -> Any:
+    """Return the first value found for a list of candidate keys."""
+    for key in keys:
+        if key in data:
+            return data[key]
+
+    raise ValueError(f"Dataset dict is missing expected keys: {tuple(keys)}.")
+
+
+def _dataset_from_tensor_pair(images: Any, masks: Any) -> TensorDataset:
+    """Build a TensorDataset from batched image and mask tensors."""
+    image_tensor = _as_tensor(images, "images").float()
+    mask_tensor = _as_tensor(masks, "masks").float()
+
+    if image_tensor.dim() == 3:
+        image_tensor = image_tensor.unsqueeze(1)
+    if mask_tensor.dim() == 3:
+        mask_tensor = mask_tensor.unsqueeze(1)
+
+    if image_tensor.dim() != 4:
+        raise ValueError(
+            f"Images must have shape [B, C, H, W] or [B, H, W], got "
+            f"{tuple(image_tensor.shape)}."
+        )
+    if mask_tensor.dim() != 4:
+        raise ValueError(
+            f"Masks must have shape [B, 1, H, W] or [B, H, W], got "
+            f"{tuple(mask_tensor.shape)}."
+        )
+    if mask_tensor.size(1) != 1:
+        raise ValueError(f"Masks must have one channel, got {mask_tensor.size(1)}.")
+    if image_tensor.size(0) != mask_tensor.size(0):
+        raise ValueError(
+            "Images and masks must have the same batch dimension, got "
+            f"{image_tensor.size(0)} and {mask_tensor.size(0)}."
+        )
+
+    return TensorDataset(image_tensor, mask_tensor)
+
+
+def load_test_dataset(data_path: Path) -> TensorDataset:
+    """Load a .pt test dataset in one of the supported formats."""
+    if not data_path.exists():
+        raise FileNotFoundError(f"Dataset file not found: {data_path}")
+
+    data = torch.load(data_path, map_location="cpu")
+
+    if isinstance(data, dict):
+        images = _get_first_existing(data, ("images", "image", "x", "inputs"))
+        masks = _get_first_existing(data, ("masks", "mask", "y", "targets", "labels"))
+        return _dataset_from_tensor_pair(images, masks)
+
+    if isinstance(data, tuple) and len(data) == 2:
+        return _dataset_from_tensor_pair(data[0], data[1])
+
+    if isinstance(data, list):
+        return _dataset_from_pairs(data)
+
+    raise ValueError(
+        "Unsupported dataset format. Expected a list of (image, mask), a tuple "
+        "of (images, masks), or a dict with images/masks keys."
+    )
+
+
+def evaluate_model(
+    model: nn.Module,
+    dataloader: DataLoader,
+    device: torch.device,
+    threshold: float = 0.5,
+) -> Dict[str, float]:
+<<<<<<< HEAD
+    """Evaluate a model and return average Dice and IoU over all batches."""
+=======
+    """Evaluate a model and return average Dice, IoU, and accuracy."""
+>>>>>>> 6117f20 ([Issue-13-15] Complete metrics, evaluation workflow and DeepLabV3 baseline comparison)
+    model.to(device)
+    model.eval()
+
+    dice_scores: List[float] = []
+    iou_scores: List[float] = []
+<<<<<<< HEAD
+=======
+    accuracy_scores: List[float] = []
+>>>>>>> 6117f20 ([Issue-13-15] Complete metrics, evaluation workflow and DeepLabV3 baseline comparison)
+
+    with torch.no_grad():
+        for images, masks in dataloader:
+            images = images.to(device)
+            masks = masks.to(device)
+
+            outputs = model(images)
+
+            dice_scores.append(dice_score(outputs, masks, threshold=threshold))
+            iou_scores.append(iou_score(outputs, masks, threshold=threshold))
+<<<<<<< HEAD
+=======
+            accuracy_scores.append(accuracy_score(outputs, masks, threshold=threshold))
+>>>>>>> 6117f20 ([Issue-13-15] Complete metrics, evaluation workflow and DeepLabV3 baseline comparison)
+
+    if not dice_scores:
+        raise ValueError("No batches were evaluated. Check the dataset and batch size.")
+
+    return {
+        "dice": sum(dice_scores) / len(dice_scores),
+        "iou": sum(iou_scores) / len(iou_scores),
+<<<<<<< HEAD
+=======
+        "accuracy": sum(accuracy_scores) / len(accuracy_scores),
+>>>>>>> 6117f20 ([Issue-13-15] Complete metrics, evaluation workflow and DeepLabV3 baseline comparison)
+    }
+
+
+def format_model_name(model_name: str) -> str:
+    """Return a readable display name for a model argument."""
+    if model_name == "unet":
+        return "UNet"
+    if model_name == "attention_unet":
+        return "AttentionUNet"
+    if model_name == "segformer_b0":
+        return "SegFormer-B0"
+<<<<<<< HEAD
+    return model_name
+
+
+def main() -> None:
+    """Run model evaluation from command-line arguments."""
+    args = parse_args()
+    if not args.checkpoint.exists():
+        raise FileNotFoundError(f"Checkpoint file not found: {args.checkpoint}")
+=======
+    if model_name == "deeplabv3_resnet50":
+        return "DeepLabV3-ResNet50"
+    return model_name
+
+
+def print_results(model_name: str, checkpoint_path: Path, results: Dict[str, float]) -> None:
+    """Print evaluation results for one model."""
+    print("Evaluation Results")
+    print(f"Model: {format_model_name(model_name)}")
+    print(f"Checkpoint: {checkpoint_path}")
+    print()
+    print(f"Dice Score: {results['dice']:.4f}")
+    print(f"IoU Score : {results['iou']:.4f}")
+    print(f"Accuracy  : {results['accuracy']:.4f}")
+
+
+def evaluate_one_model(
+    model_name: str,
+    checkpoint_path: Path,
+    dataloader: DataLoader,
+    device: torch.device,
+    threshold: float,
+) -> Dict[str, float]:
+    """Load and evaluate one model."""
+    if not checkpoint_path.exists():
+        raise FileNotFoundError(f"Checkpoint file not found: {checkpoint_path}")
+
+    model = build_model(model_name)
+    load_checkpoint(model, checkpoint_path, device)
+    return evaluate_model(
+        model=model,
+        dataloader=dataloader,
+        device=device,
+        threshold=threshold,
+    )
+
+
+def main() -> None:
+    """Run model evaluation from command-line arguments."""
+    args = parse_args()
+>>>>>>> 6117f20 ([Issue-13-15] Complete metrics, evaluation workflow and DeepLabV3 baseline comparison)
+    if not args.data.exists():
+        raise FileNotFoundError(f"Dataset file not found: {args.data}")
+
+    device = resolve_device(args.device)
+<<<<<<< HEAD
+    model = build_model(args.model)
+
+    load_checkpoint(model, args.checkpoint, device)
+=======
+>>>>>>> 6117f20 ([Issue-13-15] Complete metrics, evaluation workflow and DeepLabV3 baseline comparison)
+    dataset = load_test_dataset(args.data)
+    dataloader = DataLoader(
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        num_workers=args.num_workers,
+    )
+
+<<<<<<< HEAD
+    results = evaluate_model(
+        model=model,
+=======
+    if args.model == "all":
+        for index, model_name in enumerate(COMPARISON_MODELS):
+            checkpoint_path = DEFAULT_CHECKPOINTS[model_name]
+            results = evaluate_one_model(
+                model_name=model_name,
+                checkpoint_path=checkpoint_path,
+                dataloader=dataloader,
+                device=device,
+                threshold=args.threshold,
+            )
+            if index > 0:
+                print()
+            print_results(model_name, checkpoint_path, results)
+        return
+
+    if args.checkpoint is None:
+        raise ValueError("--checkpoint is required unless --model all is used.")
+
+    results = evaluate_one_model(
+        model_name=args.model,
+        checkpoint_path=args.checkpoint,
+>>>>>>> 6117f20 ([Issue-13-15] Complete metrics, evaluation workflow and DeepLabV3 baseline comparison)
+        dataloader=dataloader,
+        device=device,
+        threshold=args.threshold,
+    )
+<<<<<<< HEAD
+
+    print("Evaluation Results")
+    print(f"Model: {format_model_name(args.model)}")
+    print(f"Checkpoint: {args.checkpoint}")
+    print()
+    print(f"Dice Score: {results['dice']:.4f}")
+    print(f"IoU Score : {results['iou']:.4f}")
+=======
+    print_results(args.model, args.checkpoint, results)
+>>>>>>> 6117f20 ([Issue-13-15] Complete metrics, evaluation workflow and DeepLabV3 baseline comparison)
+
+
+if __name__ == "__main__":
+    main()
