@@ -10,7 +10,78 @@ import torch.nn.functional as F
 from torch import nn
 from torchvision.models import ResNet50_Weights, resnet50
 from torchvision.models._utils import IntermediateLayerGetter
-from torchvision.models.segmentation.deeplabv3 import ASPP
+
+
+class ASPPConv(nn.Sequential):
+    """Atrous convolution branch for ASPP."""
+
+    def __init__(self, in_channels: int, out_channels: int, dilation: int) -> None:
+        super().__init__(
+            nn.Conv2d(
+                in_channels,
+                out_channels,
+                kernel_size=3,
+                padding=dilation,
+                dilation=dilation,
+                bias=False,
+            ),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+        )
+
+
+class ASPPPooling(nn.Module):
+    """Image pooling branch without BatchNorm on the 1x1 pooled tensor."""
+
+    def __init__(self, in_channels: int, out_channels: int) -> None:
+        super().__init__()
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.project = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False),
+            nn.ReLU(inplace=True),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        size = x.shape[-2:]
+        x = self.pool(x)
+        x = self.project(x)
+        return F.interpolate(x, size=size, mode="bilinear", align_corners=False)
+
+
+class ASPP(nn.Module):
+    """ASPP module safe for small per-GPU batch sizes."""
+
+    def __init__(
+        self,
+        in_channels: int,
+        atrous_rates: tuple[int, int, int],
+        out_channels: int = 256,
+        dropout: float = 0.5,
+    ) -> None:
+        super().__init__()
+        modules = [
+            nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False),
+                nn.BatchNorm2d(out_channels),
+                nn.ReLU(inplace=True),
+            )
+        ]
+        modules.extend(
+            ASPPConv(in_channels, out_channels, rate) for rate in atrous_rates
+        )
+        modules.append(ASPPPooling(in_channels, out_channels))
+
+        self.convs = nn.ModuleList(modules)
+        self.project = nn.Sequential(
+            nn.Conv2d(len(modules) * out_channels, out_channels, kernel_size=1, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+            nn.Dropout(dropout),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        outputs = [conv(x) for conv in self.convs]
+        return self.project(torch.cat(outputs, dim=1))
 
 
 class SeparableConv2d(nn.Sequential):
@@ -150,4 +221,3 @@ class DeepLabV3PlusResNet50Binary(nn.Module):
     def predict_proba(self, x: torch.Tensor) -> torch.Tensor:
         """Return vessel probability maps [B, 1, H, W]."""
         return torch.sigmoid(self.forward(x))
-
