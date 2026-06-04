@@ -14,11 +14,17 @@ import torch
 from PIL import Image
 from torch import nn
 
+try:
+    import cv2
+except ImportError:
+    cv2 = None
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = PROJECT_ROOT / "src"
 SEGFORMER_PATH = SRC_DIR / "models" / "segformer.py"
 DEEPLAB_PATH = SRC_DIR / "models" / "deeplabv3_resnet50.py"
+DEEPLABPLUS_PATH = SRC_DIR / "models" / "deeplabv3plus_resnet50.py"
 VES_FUNC_PATH = SRC_DIR / "ves_func.py"
 MODEL_INPUT_SIZE = (512, 512)
 IMAGENET_MEAN = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
@@ -32,14 +38,29 @@ MODEL_CONFIGS = {
         "default_threshold": 0.15,
         "init_kwargs": {"pretrained": False},
         "normalize": True,
+        "auto_crop": True,
     },
     "DeepLabV3-ResNet50": {
         "module_path": DEEPLAB_PATH,
         "class_name": "DeepLabV3ResNet50Binary",
         "checkpoint": PROJECT_ROOT / "src" / "models" / "best_deeplabv3_resnet50.pth",
+        "default_threshold": 0.75,
+        "init_kwargs": {"pretrained_backbone": False},
+        "normalize": True,
+        "auto_crop": True,
+        "postprocess": False,
+        "min_area": 20,
+    },
+    "DeepLabV3+-ResNet50": {
+        "module_path": DEEPLABPLUS_PATH,
+        "class_name": "DeepLabV3PlusResNet50Binary",
+        "checkpoint": PROJECT_ROOT / "src" / "models" / "best_deeplabv3plus_resnet50.pth",
         "default_threshold": 0.50,
         "init_kwargs": {"pretrained_backbone": False},
         "normalize": True,
+        "auto_crop": True,
+        "postprocess": False,
+        "min_area": 20,
     },
 }
 
@@ -174,6 +195,115 @@ def preprocess_image(image: Image.Image, normalize: bool) -> torch.Tensor:
     return tensor.unsqueeze(0).contiguous()
 
 
+def crop_retina_region(image: Image.Image) -> Tuple[Image.Image, Tuple[int, int, int, int], bool]:
+    """Crop the visible fundus region from black-padded uploads."""
+    array = np.asarray(image.convert("RGB"))
+    height, width = array.shape[:2]
+    max_channel = array.max(axis=2)
+    min_channel = array.min(axis=2)
+    color_spread = max_channel - min_channel
+
+    # Prefer the orange/red fundus content when the upload is a report figure
+    # containing labels, white canvas, and a separate black/white GT panel.
+    red = array[:, :, 0].astype(np.int16)
+    green = array[:, :, 1].astype(np.int16)
+    blue = array[:, :, 2].astype(np.int16)
+    fundus_like = (
+        (max_channel > 35)
+        & (max_channel < 245)
+        & (color_spread > 18)
+        & (red >= green - 20)
+        & (red > blue + 10)
+    )
+
+    if fundus_like.mean() >= 0.015:
+        ys, xs = np.where(fundus_like)
+        left = int(xs.min())
+        right = int(xs.max()) + 1
+        top = int(ys.min())
+        bottom = int(ys.max()) + 1
+
+        box_width = right - left
+        box_height = bottom - top
+        center_x = (left + right) / 2.0
+        center_y = (top + bottom) / 2.0
+        side = int(max(box_width, box_height) * 1.08)
+        side = min(max(side, 1), max(width, height))
+
+        crop_left = int(round(center_x - side / 2.0))
+        crop_top = int(round(center_y - side / 2.0))
+        crop_right = crop_left + side
+        crop_bottom = crop_top + side
+
+        if crop_left < 0:
+            crop_right -= crop_left
+            crop_left = 0
+        if crop_top < 0:
+            crop_bottom -= crop_top
+            crop_top = 0
+        if crop_right > width:
+            crop_left -= crop_right - width
+            crop_right = width
+        if crop_bottom > height:
+            crop_top -= crop_bottom - height
+            crop_bottom = height
+
+        crop_left = max(crop_left, 0)
+        crop_top = max(crop_top, 0)
+        crop_right = min(crop_right, width)
+        crop_bottom = min(crop_bottom, height)
+        crop_box = (crop_left, crop_top, crop_right, crop_bottom)
+        return image.crop(crop_box), crop_box, True
+
+    brightness = max_channel
+    non_black = brightness > 18
+
+    if non_black.mean() < 0.02:
+        return image, (0, 0, width, height), False
+
+    ys, xs = np.where(non_black)
+    left = int(xs.min())
+    right = int(xs.max()) + 1
+    top = int(ys.min())
+    bottom = int(ys.max()) + 1
+
+    box_width = right - left
+    box_height = bottom - top
+    if box_width >= width * 0.92 and box_height >= height * 0.92:
+        return image, (0, 0, width, height), False
+
+    center_x = (left + right) / 2.0
+    center_y = (top + bottom) / 2.0
+    side = int(max(box_width, box_height) * 1.12)
+    side = min(max(side, 1), max(width, height))
+
+    crop_left = int(round(center_x - side / 2.0))
+    crop_top = int(round(center_y - side / 2.0))
+    crop_right = crop_left + side
+    crop_bottom = crop_top + side
+
+    if crop_left < 0:
+        crop_right -= crop_left
+        crop_left = 0
+    if crop_top < 0:
+        crop_bottom -= crop_top
+        crop_top = 0
+    if crop_right > width:
+        crop_left -= crop_right - width
+        crop_right = width
+    if crop_bottom > height:
+        crop_top -= crop_bottom - height
+        crop_bottom = height
+
+    crop_left = max(crop_left, 0)
+    crop_top = max(crop_top, 0)
+    crop_right = min(crop_right, width)
+    crop_bottom = min(crop_bottom, height)
+
+    crop_box = (crop_left, crop_top, crop_right, crop_bottom)
+    return image.crop(crop_box), crop_box, True
+
+
 def logits_from_output(output: Any) -> torch.Tensor:
     """Extract logits from tensor outputs or torchvision-style dict outputs."""
     if isinstance(output, dict):
@@ -207,6 +337,71 @@ def probability_from_logits(logits: torch.Tensor) -> torch.Tensor:
     raise ValueError(f"Expected at least one output channel, got {tuple(logits.shape)}.")
 
 
+def remove_small_components(mask: np.ndarray, min_area: int) -> np.ndarray:
+    """Remove small 8-connected foreground components from a binary mask."""
+    foreground = mask.astype(bool)
+    visited = np.zeros(foreground.shape, dtype=bool)
+    cleaned = np.zeros(foreground.shape, dtype=bool)
+    height, width = foreground.shape
+
+    for start_y, start_x in np.argwhere(foreground):
+        start_y = int(start_y)
+        start_x = int(start_x)
+        if visited[start_y, start_x]:
+            continue
+
+        stack = [(start_y, start_x)]
+        component = []
+        visited[start_y, start_x] = True
+
+        while stack:
+            y, x = stack.pop()
+            component.append((y, x))
+            for dy in (-1, 0, 1):
+                for dx in (-1, 0, 1):
+                    if dy == 0 and dx == 0:
+                        continue
+                    next_y = y + dy
+                    next_x = x + dx
+                    if (
+                        0 <= next_y < height
+                        and 0 <= next_x < width
+                        and foreground[next_y, next_x]
+                        and not visited[next_y, next_x]
+                    ):
+                        visited[next_y, next_x] = True
+                        stack.append((next_y, next_x))
+
+        if len(component) >= min_area:
+            for y, x in component:
+                cleaned[y, x] = True
+
+    return cleaned.astype(np.uint8)
+
+
+def postprocess_binary_mask(mask: np.ndarray, min_area: int = 20) -> np.ndarray:
+    """Apply the same light cleanup used by the DeepLabV3 notebook."""
+    binary = mask.astype(np.uint8)
+
+    if cv2 is not None:
+        kernel = np.ones((2, 2), np.uint8)
+        binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
+        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+            binary,
+            connectivity=8,
+        )
+        cleaned = np.zeros_like(binary)
+        for label_id in range(1, num_labels):
+            area = stats[label_id, cv2.CC_STAT_AREA]
+            if area >= min_area:
+                cleaned[labels == label_id] = 1
+        return cleaned.astype(np.uint8)
+
+    return remove_small_components(binary, min_area=min_area)
+
+
 def predict_mask(
     model_name: str,
     model: nn.Module,
@@ -215,19 +410,44 @@ def predict_mask(
     threshold: float,
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
     """Run inference and return an aligned binary mask plus debug stats."""
-    normalize = bool(MODEL_CONFIGS[model_name]["normalize"])
-    input_tensor = preprocess_image(image, normalize=normalize).to(device)
+    config = MODEL_CONFIGS[model_name]
+    normalize = bool(config["normalize"])
+    if bool(config.get("auto_crop", False)):
+        inference_image, crop_box, was_cropped = crop_retina_region(image)
+    else:
+        inference_image = image
+        crop_box = (0, 0, image.width, image.height)
+        was_cropped = False
+
+    input_tensor = preprocess_image(inference_image, normalize=normalize).to(device)
 
     with torch.no_grad():
         output = model(input_tensor)
         logits = logits_from_output(output)
         probability = probability_from_logits(logits)
         probability_max = float(probability.detach().max().cpu().item())
-        binary = (probability >= threshold).float().cpu().squeeze(0).numpy()
+        probability_np = probability.detach().cpu().squeeze(0).numpy()
 
-    mask_image = Image.fromarray((binary * 255).astype(np.uint8), mode="L")
-    mask_image = mask_image.resize(image.size, Image.Resampling.NEAREST)
-    binary_mask = (np.asarray(mask_image) > 0).astype(np.uint8)
+    probability_image = Image.fromarray(
+        np.clip(probability_np * 255.0, 0, 255).astype(np.uint8),
+        mode="L",
+    )
+    probability_image = probability_image.resize(inference_image.size, Image.Resampling.BILINEAR)
+    probability_crop = np.asarray(probability_image, dtype=np.float32) / 255.0
+    probability_resized = np.zeros((image.height, image.width), dtype=np.float32)
+    left, top, right, bottom = crop_box
+    probability_resized[top:bottom, left:right] = probability_crop
+    binary = (probability_resized >= threshold).astype(np.uint8)
+
+    raw_vessel_pixels = int(binary.sum())
+    postprocess = bool(config.get("postprocess", False))
+    if postprocess:
+        binary = postprocess_binary_mask(
+            binary,
+            min_area=int(config.get("min_area", 20)),
+        )
+
+    binary_mask = binary.astype(np.uint8)
 
     debug_stats = {
         "raw_output_shape": tuple(logits.shape),
@@ -235,10 +455,17 @@ def predict_mask(
         "raw_output_max": float(logits.detach().max().cpu().item()),
         "probability_min": float(probability.detach().min().cpu().item()),
         "probability_max": probability_max,
+        "probability_map": probability_resized,
         "selected_threshold": float(threshold),
+        "raw_vessel_pixels": raw_vessel_pixels,
         "vessel_pixels": int(binary_mask.sum()),
         "total_pixels": int(binary_mask.size),
+        "crop_box": crop_box,
+        "input_size": inference_image.size,
+        "input_image": inference_image,
+        "was_cropped": was_cropped,
         "preprocessing": "ImageNet normalized" if normalize else "RGB [0, 1]",
+        "postprocessing": "Morphology + small component cleanup" if postprocess else "None",
     }
 
     return binary_mask, debug_stats
@@ -504,20 +731,29 @@ def main() -> None:
         st.error(f"Could not run inference: {exc}")
         return
 
+    model_input_image = debug_stats.get("input_image", original_image)
     mask_image = mask_to_image(binary_mask)
+    probability_image = Image.fromarray(
+        np.clip(debug_stats["probability_map"] * 255.0, 0, 255).astype(np.uint8),
+        mode="L",
+    )
     overlay_image = Image.fromarray(overlay, mode="RGB")
     skeleton = analysis.get("skeleton")
     skeleton_image = mask_to_image(skeleton) if skeleton is not None else None
 
     st.subheader("Segmentation results")
-    result_columns = st.columns(4)
+    result_columns = st.columns(6)
     with result_columns[0]:
         st.image(original_image, caption="Original image", width="stretch")
     with result_columns[1]:
-        st.image(mask_image, caption="Predicted vessel mask", width="stretch")
+        st.image(model_input_image, caption="Model input crop", width="stretch")
     with result_columns[2]:
-        st.image(overlay_image, caption="Overlay", width="stretch")
+        st.image(probability_image, caption="Probability map", width="stretch")
     with result_columns[3]:
+        st.image(mask_image, caption="Predicted vessel mask", width="stretch")
+    with result_columns[4]:
+        st.image(overlay_image, caption="Overlay", width="stretch")
+    with result_columns[5]:
         if skeleton_image is not None:
             st.image(skeleton_image, caption="Skeletonized vessel map", width="stretch")
         else:
@@ -545,7 +781,7 @@ def main() -> None:
     )
 
     st.subheader("Inference debug")
-    debug_cols = st.columns(7)
+    debug_cols = st.columns(8)
     with debug_cols[0]:
         st.metric("Raw Output Min", f"{debug_stats['raw_output_min']:.6f}")
     with debug_cols[1]:
@@ -557,12 +793,18 @@ def main() -> None:
     with debug_cols[4]:
         st.metric("Threshold", f"{debug_stats['selected_threshold']:.6f}")
     with debug_cols[5]:
-        st.metric("Vessel Pixels", f"{debug_stats['vessel_pixels']:,}")
+        st.metric("Raw Vessel Pixels", f"{debug_stats['raw_vessel_pixels']:,}")
     with debug_cols[6]:
+        st.metric("Vessel Pixels", f"{debug_stats['vessel_pixels']:,}")
+    with debug_cols[7]:
         st.metric("Total Pixels", f"{debug_stats['total_pixels']:,}")
     st.caption(
         f"Raw output shape: {debug_stats['raw_output_shape']} | "
-        f"Preprocessing: {debug_stats['preprocessing']}"
+        f"Preprocessing: {debug_stats['preprocessing']} | "
+        f"Postprocessing: {debug_stats['postprocessing']} | "
+        f"Auto crop: {debug_stats['was_cropped']} | "
+        f"Model input size: {debug_stats['input_size']} | "
+        f"Crop box: {debug_stats['crop_box']}"
     )
     if debug_stats["vessel_pixels"] == 0:
         suggested_threshold = max(debug_stats["probability_max"] * 0.75, 0.000001)

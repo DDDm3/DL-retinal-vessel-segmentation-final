@@ -15,7 +15,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.models import AttentionUNet, DeepLabV3ResNet50Binary, SegFormerB0, UNet  # noqa: E402
+from src.models import (  # noqa: E402
+    AttentionUNet,
+    DeepLabV3PlusResNet50Binary,
+    DeepLabV3ResNet50Binary,
+    SegFormerB0,
+    UNet,
+)
 from src.utils.metrics import accuracy_score, dice_score, iou_score  # noqa: E402
 
 
@@ -23,8 +29,9 @@ TensorPair = Tuple[torch.Tensor, torch.Tensor]
 DEFAULT_CHECKPOINTS = {
     "segformer_b0": Path("src/models/best_segformer_b0.pth"),
     "deeplabv3_resnet50": Path("src/models/best_deeplabv3_resnet50.pth"),
+    "deeplabv3plus_resnet50": Path("src/models/best_deeplabv3plus_resnet50.pth"),
 }
-COMPARISON_MODELS = ("segformer_b0", "deeplabv3_resnet50")
+COMPARISON_MODELS = ("segformer_b0", "deeplabv3_resnet50", "deeplabv3plus_resnet50")
 
 
 def parse_args() -> argparse.Namespace:
@@ -39,6 +46,7 @@ def parse_args() -> argparse.Namespace:
             "attention_unet",
             "segformer_b0",
             "deeplabv3_resnet50",
+            "deeplabv3plus_resnet50",
             "all",
         ),
         required=True,
@@ -67,6 +75,29 @@ def parse_args() -> argparse.Namespace:
         default=0.5,
         type=float,
         help="Threshold used to binarize predictions.",
+    )
+    parser.add_argument(
+        "--tune-threshold",
+        action="store_true",
+        help="Search thresholds on the provided dataset and report the best Dice threshold.",
+    )
+    parser.add_argument(
+        "--threshold-min",
+        default=0.3,
+        type=float,
+        help="Minimum threshold for --tune-threshold.",
+    )
+    parser.add_argument(
+        "--threshold-max",
+        default=0.85,
+        type=float,
+        help="Maximum threshold for --tune-threshold.",
+    )
+    parser.add_argument(
+        "--threshold-step",
+        default=0.05,
+        type=float,
+        help="Threshold step for --tune-threshold.",
     )
     parser.add_argument(
         "--device",
@@ -109,6 +140,8 @@ def build_model(model_name: str) -> nn.Module:
         model = SegFormerB0(pretrained=False)
     elif model_name == "deeplabv3_resnet50":
         model = DeepLabV3ResNet50Binary(pretrained_backbone=False)
+    elif model_name == "deeplabv3plus_resnet50":
+        model = DeepLabV3PlusResNet50Binary(pretrained_backbone=False)
     else:
         raise ValueError(f"Unsupported model '{model_name}'.")
 
@@ -365,6 +398,52 @@ def evaluate_model(
     }
 
 
+def threshold_candidates(
+    threshold_min: float,
+    threshold_max: float,
+    threshold_step: float,
+) -> List[float]:
+    """Build an inclusive threshold grid."""
+    if threshold_step <= 0:
+        raise ValueError("--threshold-step must be positive.")
+    if threshold_min > threshold_max:
+        raise ValueError("--threshold-min must be <= --threshold-max.")
+
+    values: List[float] = []
+    value = threshold_min
+    while value <= threshold_max + 1e-9:
+        values.append(round(value, 6))
+        value += threshold_step
+    return values
+
+
+def tune_threshold(
+    model: nn.Module,
+    dataloader: DataLoader,
+    device: torch.device,
+    thresholds: Sequence[float],
+) -> Tuple[float, Dict[str, float]]:
+    """Find the threshold with the best Dice score on a dataset."""
+    best_threshold = float(thresholds[0])
+    best_results: Dict[str, float] = {}
+    best_dice = -1.0
+
+    for threshold in thresholds:
+        results = evaluate_model(model, dataloader, device, threshold=threshold)
+        print(
+            f"threshold={threshold:.3f} "
+            f"dice={results['dice']:.4f} "
+            f"iou={results['iou']:.4f} "
+            f"accuracy={results['accuracy']:.4f}"
+        )
+        if results["dice"] > best_dice:
+            best_dice = results["dice"]
+            best_threshold = float(threshold)
+            best_results = results
+
+    return best_threshold, best_results
+
+
 def format_model_name(model_name: str) -> str:
     """Return a readable display name for a model argument."""
     if model_name == "unet":
@@ -375,6 +454,8 @@ def format_model_name(model_name: str) -> str:
         return "SegFormer-B0"
     if model_name == "deeplabv3_resnet50":
         return "DeepLabV3-ResNet50"
+    if model_name == "deeplabv3plus_resnet50":
+        return "DeepLabV3+-ResNet50"
     return model_name
 
 
@@ -384,6 +465,8 @@ def print_results(model_name: str, checkpoint_path: Path, results: Dict[str, flo
     print(f"Model: {format_model_name(model_name)}")
     print(f"Checkpoint: {checkpoint_path}")
     print()
+    if "threshold" in results:
+        print(f"Best Threshold: {results['threshold']:.4f}")
     print(f"Dice Score: {results['dice']:.4f}")
     print(f"IoU Score : {results['iou']:.4f}")
     print(f"Accuracy  : {results['accuracy']:.4f}")
@@ -395,6 +478,7 @@ def evaluate_one_model(
     dataloader: DataLoader,
     device: torch.device,
     threshold: float,
+    tune_threshold_args: argparse.Namespace | None = None,
 ) -> Dict[str, float]:
     """Load and evaluate one model."""
     if not checkpoint_path.exists():
@@ -402,6 +486,17 @@ def evaluate_one_model(
 
     model = build_model(model_name)
     load_checkpoint(model, checkpoint_path, device)
+
+    if tune_threshold_args is not None and tune_threshold_args.tune_threshold:
+        thresholds = threshold_candidates(
+            tune_threshold_args.threshold_min,
+            tune_threshold_args.threshold_max,
+            tune_threshold_args.threshold_step,
+        )
+        best_threshold, best_results = tune_threshold(model, dataloader, device, thresholds)
+        best_results["threshold"] = best_threshold
+        return best_results
+
     return evaluate_model(
         model=model,
         dataloader=dataloader,
@@ -434,6 +529,7 @@ def main() -> None:
                 dataloader=dataloader,
                 device=device,
                 threshold=args.threshold,
+                tune_threshold_args=args,
             )
             if index > 0:
                 print()
@@ -449,6 +545,7 @@ def main() -> None:
         dataloader=dataloader,
         device=device,
         threshold=args.threshold,
+        tune_threshold_args=args,
     )
     print_results(args.model, args.checkpoint, results)
 
