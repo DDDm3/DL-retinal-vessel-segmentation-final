@@ -7,6 +7,7 @@ Current status: structure only, no model implementation yet.
 Evaluation Results
 Model: SegFormer-B0
 Checkpoint: src\models\best_segformer_b0.pth
+Transfer notebook: notebooks\04_SegFormer_B0_CHASE_to_DRIVE.ipynb
 
 Dice Score: 0.6933
 IoU Score : 0.5311
