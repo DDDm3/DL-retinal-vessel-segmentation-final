@@ -23,7 +23,6 @@ except ImportError:
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = PROJECT_ROOT / "src"
 SEGFORMER_PATH = SRC_DIR / "models" / "segformer.py"
-DEEPLAB_PATH = SRC_DIR / "models" / "deeplabv3_resnet50.py"
 DEEPLABPLUS_PATH = SRC_DIR / "models" / "deeplabv3plus_resnet50.py"
 VES_FUNC_PATH = SRC_DIR / "ves_func.py"
 MODEL_INPUT_SIZE = (512, 512)
@@ -39,17 +38,6 @@ MODEL_CONFIGS = {
         "init_kwargs": {"pretrained": False},
         "normalize": True,
         "auto_crop": True,
-    },
-    "DeepLabV3-ResNet50": {
-        "module_path": DEEPLAB_PATH,
-        "class_name": "DeepLabV3ResNet50Binary",
-        "checkpoint": PROJECT_ROOT / "src" / "models" / "best_deeplabv3plus_resnet50.pth",
-        "default_threshold": 0.75,
-        "init_kwargs": {"pretrained_backbone": False},
-        "normalize": True,
-        "auto_crop": True,
-        "postprocess": False,
-        "min_area": 20,
     },
     "DeepLabV3+-ResNet50": {
         "module_path": DEEPLABPLUS_PATH,

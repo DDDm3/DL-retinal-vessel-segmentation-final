@@ -18,7 +18,6 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.models import (  # noqa: E402
     AttentionUNet,
     DeepLabV3PlusResNet50Binary,
-    DeepLabV3ResNet50Binary,
     SegFormerB0,
     UNet,
 )
@@ -34,10 +33,9 @@ from src.utils.metrics import (  # noqa: E402
 TensorPair = Tuple[torch.Tensor, torch.Tensor]
 DEFAULT_CHECKPOINTS = {
     "segformer_b0": Path("src/models/best_segformer_b0.pth"),
-    "deeplabv3_resnet50": Path("src/models/best_deeplabv3_resnet50.pth"),
     "deeplabv3plus_resnet50": Path("src/models/best_deeplabv3plus_resnet50.pth"),
 }
-COMPARISON_MODELS = ("segformer_b0", "deeplabv3_resnet50", "deeplabv3plus_resnet50")
+COMPARISON_MODELS = ("segformer_b0", "deeplabv3plus_resnet50")
 
 
 def parse_args() -> argparse.Namespace:
@@ -51,7 +49,6 @@ def parse_args() -> argparse.Namespace:
             "unet",
             "attention_unet",
             "segformer_b0",
-            "deeplabv3_resnet50",
             "deeplabv3plus_resnet50",
             "all",
         ),
@@ -144,8 +141,6 @@ def build_model(model_name: str) -> nn.Module:
         model = AttentionUNet()
     elif model_name == "segformer_b0":
         model = SegFormerB0(pretrained=False)
-    elif model_name == "deeplabv3_resnet50":
-        model = DeepLabV3ResNet50Binary(pretrained_backbone=False)
     elif model_name == "deeplabv3plus_resnet50":
         model = DeepLabV3PlusResNet50Binary(pretrained_backbone=False)
     else:
@@ -508,8 +503,6 @@ def format_model_name(model_name: str) -> str:
         return "AttentionUNet"
     if model_name == "segformer_b0":
         return "SegFormer-B0"
-    if model_name == "deeplabv3_resnet50":
-        return "DeepLabV3-ResNet50"
     if model_name == "deeplabv3plus_resnet50":
         return "DeepLabV3+-ResNet50"
     return model_name

@@ -15,7 +15,7 @@ Deep learning project for retinal vessel segmentation on DRIVE and CHASEDB1.
 
 The main training pipeline is implemented in notebooks:
 
-- `notebooks/03_DeepLabV3_ResNet50_CHASE_to_DRIVE.ipynb`
+- `notebooks/03_DeepLabV3Plus_ResNet50_CHASE_to_DRIVE.ipynb`
   - DeepLabV3+-ResNet50.
   - CHASEDB1 source training followed by DRIVE fine-tuning.
   - BCE + Tversky loss for class-imbalanced vessel segmentation.
@@ -70,5 +70,4 @@ The app supports:
 - binary vessel mask prediction;
 - overlay visualization;
 - skeleton and vessel statistics.
-
 
