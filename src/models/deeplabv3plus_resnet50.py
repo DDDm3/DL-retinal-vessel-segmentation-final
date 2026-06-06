@@ -1,161 +1,31 @@
-"""DeepLabV3+-ResNet50 for binary retinal vessel segmentation."""
+"""DeepLabV3+-ResNet50 wrapper from segmentation-models-pytorch."""
 
 from __future__ import annotations
 
-from collections import OrderedDict
 from typing import Optional
 
 import torch
-import torch.nn.functional as F
 from torch import nn
-from torchvision.models import ResNet50_Weights, resnet50
-from torchvision.models._utils import IntermediateLayerGetter
 
-
-class ASPPConv(nn.Sequential):
-    """Atrous convolution branch for ASPP."""
-
-    def __init__(self, in_channels: int, out_channels: int, dilation: int) -> None:
-        super().__init__(
-            nn.Conv2d(
-                in_channels,
-                out_channels,
-                kernel_size=3,
-                padding=dilation,
-                dilation=dilation,
-                bias=False,
-            ),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True),
-        )
-
-
-class ASPPPooling(nn.Module):
-    """Image pooling branch without BatchNorm on the 1x1 pooled tensor."""
-
-    def __init__(self, in_channels: int, out_channels: int) -> None:
-        super().__init__()
-        self.pool = nn.AdaptiveAvgPool2d(1)
-        self.project = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False),
-            nn.ReLU(inplace=True),
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        size = x.shape[-2:]
-        x = self.pool(x)
-        x = self.project(x)
-        return F.interpolate(x, size=size, mode="bilinear", align_corners=False)
-
-
-class ASPP(nn.Module):
-    """ASPP module safe for small per-GPU batch sizes."""
-
-    def __init__(
-        self,
-        in_channels: int,
-        atrous_rates: tuple[int, int, int],
-        out_channels: int = 256,
-        dropout: float = 0.5,
-    ) -> None:
-        super().__init__()
-        modules = [
-            nn.Sequential(
-                nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=False),
-                nn.BatchNorm2d(out_channels),
-                nn.ReLU(inplace=True),
-            )
-        ]
-        modules.extend(
-            ASPPConv(in_channels, out_channels, rate) for rate in atrous_rates
-        )
-        modules.append(ASPPPooling(in_channels, out_channels))
-
-        self.convs = nn.ModuleList(modules)
-        self.project = nn.Sequential(
-            nn.Conv2d(len(modules) * out_channels, out_channels, kernel_size=1, bias=False),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True),
-            nn.Dropout(dropout),
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        outputs = [conv(x) for conv in self.convs]
-        return self.project(torch.cat(outputs, dim=1))
-
-
-class SeparableConv2d(nn.Sequential):
-    """Depthwise separable convolution used in the DeepLabV3+ decoder."""
-
-    def __init__(
-        self,
-        in_channels: int,
-        out_channels: int,
-        kernel_size: int = 3,
-        padding: int = 1,
-        bias: bool = False,
-    ) -> None:
-        super().__init__(
-            nn.Conv2d(
-                in_channels,
-                in_channels,
-                kernel_size=kernel_size,
-                padding=padding,
-                groups=in_channels,
-                bias=bias,
-            ),
-            nn.BatchNorm2d(in_channels),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=bias),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True),
-        )
-
-
-class DeepLabV3PlusHead(nn.Module):
-    """ASPP head plus low-level feature decoder from DeepLabV3+."""
-
-    def __init__(
-        self,
-        high_channels: int = 2048,
-        low_channels: int = 256,
-        low_project_channels: int = 48,
-        decoder_channels: int = 256,
-        num_classes: int = 1,
-        atrous_rates: tuple[int, int, int] = (6, 12, 18),
-        dropout: float = 0.1,
-    ) -> None:
-        super().__init__()
-        self.aspp = ASPP(high_channels, atrous_rates, out_channels=decoder_channels)
-        self.low_project = nn.Sequential(
-            nn.Conv2d(low_channels, low_project_channels, kernel_size=1, bias=False),
-            nn.BatchNorm2d(low_project_channels),
-            nn.ReLU(inplace=True),
-        )
-        self.decoder = nn.Sequential(
-            SeparableConv2d(decoder_channels + low_project_channels, decoder_channels),
-            SeparableConv2d(decoder_channels, decoder_channels),
-            nn.Dropout(dropout),
-            nn.Conv2d(decoder_channels, num_classes, kernel_size=1),
-        )
-
-    def forward(self, features: OrderedDict[str, torch.Tensor]) -> torch.Tensor:
-        low = features["low"]
-        high = features["out"]
-
-        high = self.aspp(high)
-        high = F.interpolate(
-            high,
-            size=low.shape[-2:],
-            mode="bilinear",
-            align_corners=False,
-        )
-        low = self.low_project(low)
-        return self.decoder(torch.cat([high, low], dim=1))
+try:
+    import segmentation_models_pytorch as smp
+except ImportError as exc:  # pragma: no cover - dependency guard
+    raise ImportError(
+        "DeepLabV3PlusResNet50Binary requires segmentation-models-pytorch. "
+        "Install dependencies with: python -m pip install -r requirements.txt"
+    ) from exc
 
 
 class DeepLabV3PlusResNet50Binary(nn.Module):
-    """DeepLabV3+-ResNet50 CNN for binary vessel segmentation.
+    """DeepLabV3+-ResNet50 CNN for binary retinal vessel segmentation.
+
+    This class intentionally calls the library implementation instead of
+    reimplementing DeepLabV3+ by hand:
+
+    - model: ``smp.DeepLabV3Plus``
+    - encoder: ResNet50
+    - encoder pretraining: ImageNet when ``pretrained_backbone=True``
+    - output: one-channel logits for binary vessel segmentation
 
     Input:
         images: [B, 3, H, W]
@@ -163,8 +33,8 @@ class DeepLabV3PlusResNet50Binary(nn.Module):
     Output:
         logits: [B, 1, H, W]
 
-    The model returns logits. Use ``torch.sigmoid(logits)`` to get the
-    probability map for threshold tuning, RF refinement, or visualization.
+    The model returns logits. Use ``torch.sigmoid(logits)`` to obtain the
+    vessel probability map before threshold tuning or visualization.
     """
 
     def __init__(
@@ -173,32 +43,45 @@ class DeepLabV3PlusResNet50Binary(nn.Module):
         output_stride: int = 16,
         num_classes: int = 1,
         atrous_rates: Optional[tuple[int, int, int]] = None,
+        decoder_channels: int = 256,
+        safe_small_batch: bool = True,
     ) -> None:
         super().__init__()
 
-        if output_stride == 16:
-            replace_stride_with_dilation = (False, False, True)
-            atrous_rates = atrous_rates or (6, 12, 18)
-        elif output_stride == 8:
-            replace_stride_with_dilation = (False, True, True)
-            atrous_rates = atrous_rates or (12, 24, 36)
-        else:
+        if output_stride not in (8, 16):
             raise ValueError("output_stride must be 8 or 16.")
 
-        weights = ResNet50_Weights.IMAGENET1K_V1 if pretrained_backbone else None
-        backbone = resnet50(
-            weights=weights,
-            replace_stride_with_dilation=replace_stride_with_dilation,
-        )
+        decoder_atrous_rates = atrous_rates
+        if decoder_atrous_rates is None:
+            decoder_atrous_rates = (12, 24, 36) if output_stride == 8 else (6, 12, 18)
 
-        self.backbone = IntermediateLayerGetter(
-            backbone,
-            return_layers={"layer1": "low", "layer4": "out"},
+        encoder_weights = "imagenet" if pretrained_backbone else None
+        self.model = smp.DeepLabV3Plus(
+            encoder_name="resnet50",
+            encoder_weights=encoder_weights,
+            encoder_output_stride=output_stride,
+            decoder_channels=decoder_channels,
+            decoder_atrous_rates=decoder_atrous_rates,
+            in_channels=3,
+            classes=num_classes,
+            activation=None,
         )
-        self.classifier = DeepLabV3PlusHead(
-            num_classes=num_classes,
-            atrous_rates=atrous_rates,
-        )
+        if safe_small_batch:
+            self._make_aspp_pooling_branch_small_batch_safe()
+
+    def _make_aspp_pooling_branch_small_batch_safe(self) -> None:
+        """Avoid BatchNorm on the 1x1 ASPP image-pooling tensor.
+
+        SMP's DeepLabV3+ follows the standard ASPP pooling branch with
+        BatchNorm after global average pooling. That is fine for regular batch
+        sizes, but it raises an error when each device sees one image during
+        training because the pooled tensor is [1, C, 1, 1]. Replacing only that
+        BatchNorm with Identity keeps the library model structure while making
+        small-batch training and notebook sanity checks reliable.
+        """
+        pooling_branch = self.model.decoder.aspp[0].convs[4]
+        if isinstance(pooling_branch[2], nn.BatchNorm2d):
+            pooling_branch[2] = nn.Identity()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if x.dim() != 4:
@@ -206,16 +89,17 @@ class DeepLabV3PlusResNet50Binary(nn.Module):
         if x.size(1) != 3:
             raise ValueError(f"Expected 3-channel input, got {tuple(x.shape)}.")
 
-        input_size = x.shape[-2:]
-        logits = self.classifier(self.backbone(x))
-        if logits.shape[-2:] != input_size:
-            logits = F.interpolate(
-                logits,
-                size=input_size,
-                mode="bilinear",
-                align_corners=False,
-            )
-        return logits
+        return self.model(x)
+
+    @property
+    def backbone(self) -> nn.Module:
+        """Compatibility alias for existing optimizer/freeze code."""
+        return self.model.encoder
+
+    @property
+    def classifier(self) -> nn.Module:
+        """Compatibility alias for decoder/head parameter groups."""
+        return nn.ModuleList([self.model.decoder, self.model.segmentation_head])
 
     @torch.no_grad()
     def predict_proba(self, x: torch.Tensor) -> torch.Tensor:

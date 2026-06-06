@@ -43,7 +43,7 @@ MODEL_CONFIGS = {
     "DeepLabV3-ResNet50": {
         "module_path": DEEPLAB_PATH,
         "class_name": "DeepLabV3ResNet50Binary",
-        "checkpoint": PROJECT_ROOT / "src" / "models" / "best_deeplabv3_resnet50.pth",
+        "checkpoint": PROJECT_ROOT / "src" / "models" / "best_deeplabv3plus_resnet50.pth",
         "default_threshold": 0.75,
         "init_kwargs": {"pretrained_backbone": False},
         "normalize": True,

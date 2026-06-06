@@ -22,7 +22,13 @@ from src.models import (  # noqa: E402
     SegFormerB0,
     UNet,
 )
-from src.utils.metrics import accuracy_score, dice_score, iou_score  # noqa: E402
+from src.utils.metrics import (  # noqa: E402
+    accuracy_score,
+    dice_score,
+    iou_score,
+    precision_score,
+    recall_score,
+)
 
 
 TensorPair = Tuple[torch.Tensor, torch.Tensor]
@@ -376,6 +382,8 @@ def evaluate_model(
     dice_scores: List[float] = []
     iou_scores: List[float] = []
     accuracy_scores: List[float] = []
+    precision_scores: List[float] = []
+    recall_scores: List[float] = []
 
     with torch.no_grad():
         for images, masks in dataloader:
@@ -387,6 +395,8 @@ def evaluate_model(
             dice_scores.append(dice_score(outputs, masks, threshold=threshold))
             iou_scores.append(iou_score(outputs, masks, threshold=threshold))
             accuracy_scores.append(accuracy_score(outputs, masks, threshold=threshold))
+            precision_scores.append(precision_score(outputs, masks, threshold=threshold))
+            recall_scores.append(recall_score(outputs, masks, threshold=threshold))
 
     if not dice_scores:
         raise ValueError("No batches were evaluated. Check the dataset and batch size.")
@@ -395,6 +405,48 @@ def evaluate_model(
         "dice": sum(dice_scores) / len(dice_scores),
         "iou": sum(iou_scores) / len(iou_scores),
         "accuracy": sum(accuracy_scores) / len(accuracy_scores),
+        "precision": sum(precision_scores) / len(precision_scores),
+        "recall": sum(recall_scores) / len(recall_scores),
+    }
+
+
+def collect_outputs(
+    model: nn.Module,
+    dataloader: DataLoader,
+    device: torch.device,
+) -> TensorPair:
+    """Run one inference pass and return CPU tensors for threshold search."""
+    model.to(device)
+    model.eval()
+
+    outputs: List[torch.Tensor] = []
+    targets: List[torch.Tensor] = []
+
+    with torch.no_grad():
+        for images, masks in dataloader:
+            images = images.to(device)
+            batch_outputs = model(images).detach().cpu()
+            outputs.append(batch_outputs)
+            targets.append(masks.detach().cpu())
+
+    if not outputs:
+        raise ValueError("No batches were evaluated. Check the dataset and batch size.")
+
+    return torch.cat(outputs, dim=0), torch.cat(targets, dim=0)
+
+
+def evaluate_cached_outputs(
+    outputs: torch.Tensor,
+    masks: torch.Tensor,
+    threshold: float,
+) -> Dict[str, float]:
+    """Evaluate already-computed model outputs at one threshold."""
+    return {
+        "dice": dice_score(outputs, masks, threshold=threshold),
+        "iou": iou_score(outputs, masks, threshold=threshold),
+        "accuracy": accuracy_score(outputs, masks, threshold=threshold),
+        "precision": precision_score(outputs, masks, threshold=threshold),
+        "recall": recall_score(outputs, masks, threshold=threshold),
     }
 
 
@@ -424,17 +476,21 @@ def tune_threshold(
     thresholds: Sequence[float],
 ) -> Tuple[float, Dict[str, float]]:
     """Find the threshold with the best Dice score on a dataset."""
+    outputs, masks = collect_outputs(model, dataloader, device)
     best_threshold = float(thresholds[0])
     best_results: Dict[str, float] = {}
     best_dice = -1.0
 
     for threshold in thresholds:
-        results = evaluate_model(model, dataloader, device, threshold=threshold)
+        results = evaluate_cached_outputs(outputs, masks, threshold=threshold)
         print(
             f"threshold={threshold:.3f} "
             f"dice={results['dice']:.4f} "
             f"iou={results['iou']:.4f} "
-            f"accuracy={results['accuracy']:.4f}"
+            f"accuracy={results['accuracy']:.4f} "
+            f"precision={results['precision']:.4f} "
+            f"recall={results['recall']:.4f}",
+            flush=True,
         )
         if results["dice"] > best_dice:
             best_dice = results["dice"]
@@ -470,6 +526,10 @@ def print_results(model_name: str, checkpoint_path: Path, results: Dict[str, flo
     print(f"Dice Score: {results['dice']:.4f}")
     print(f"IoU Score : {results['iou']:.4f}")
     print(f"Accuracy  : {results['accuracy']:.4f}")
+    if "precision" in results:
+        print(f"Precision : {results['precision']:.4f}")
+    if "recall" in results:
+        print(f"Recall    : {results['recall']:.4f}")
 
 
 def evaluate_one_model(

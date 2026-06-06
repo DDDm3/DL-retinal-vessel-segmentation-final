@@ -1,6 +1,12 @@
 torch
 torchvision
+segmentation-models-pytorch>=0.3.4
 transformers<5
 numpy
+pandas
 pillow
 streamlit
+matplotlib
+albumentations
+opencv-python
+tqdm

@@ -36,8 +36,6 @@ results/
 outputs/
 outputs/predictions/
 
-# Markdown files and folder
-*.md
 md/
 
 dataset/drive_test_dataset.pt
