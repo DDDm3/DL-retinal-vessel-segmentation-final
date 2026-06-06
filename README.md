@@ -36,14 +36,9 @@ Supporting scripts:
 
 Evaluated on `dataset/drive_test_dataset.pt` with threshold tuning.
 
-Note: these metrics were produced by the previous trained DeepLabV3+ checkpoint.
-After switching DeepLabV3+-ResNet50 to the `segmentation-models-pytorch`
-implementation, retrain or fine-tune the model and regenerate the checkpoint
-before reporting final metrics again.
-
 | Model | Best Threshold | Dice | IoU | Accuracy | Precision | Recall |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| DeepLabV3+-ResNet50 | 0.85 | 0.7269 | 0.5713 | 0.9507 | 0.7082 | 0.7532 |
+| DeepLabV3+-ResNet50 | 0.85 | 0.7173 | 0.5596 | 0.9487 | 0.6960 | 0.7471 |
 | SegFormer-B0 | 0.50 | 0.7160 | 0.5579 | 0.9495 | 0.7070 | 0.7308 |
 
 ## Run Evaluation
@@ -80,5 +75,5 @@ The app supports:
 
 ```latex
 \item Developed a retinal vessel segmentation pipeline on DRIVE and CHASEDB1 using SegFormer-B0 and DeepLabV3+-ResNet50 with transfer learning, probability maps, and threshold tuning.
-\item Achieved 72.69\% Dice, 57.13\% IoU, and 95.07\% Accuracy with DeepLabV3+-ResNet50 on the DRIVE test set; implemented a Streamlit demo for mask prediction, overlays, and vessel analysis.
+\item Achieved 71.73\% Dice, 55.96\% IoU, and 94.87\% Accuracy with DeepLabV3+-ResNet50 on the DRIVE test set; implemented a Streamlit demo for mask prediction, overlays, and vessel analysis.
 ```
