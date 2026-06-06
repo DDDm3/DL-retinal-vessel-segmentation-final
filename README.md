@@ -71,9 +71,4 @@ The app supports:
 - overlay visualization;
 - skeleton and vessel statistics.
 
-## CV Summary
 
-```latex
-\item Developed a retinal vessel segmentation pipeline on DRIVE and CHASEDB1 using SegFormer-B0 and DeepLabV3+-ResNet50 with transfer learning, probability maps, and threshold tuning.
-\item Achieved 71.73\% Dice, 55.96\% IoU, and 94.87\% Accuracy with DeepLabV3+-ResNet50 on the DRIVE test set; implemented a Streamlit demo for mask prediction, overlays, and vessel analysis.
-```
