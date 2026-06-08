@@ -253,10 +253,7 @@ def analyze_vessel_mask(image_path, threshold=127, invert=False):
     junction_sizes = connected_component_sizes(junction_pixels)
     vessel_component_sizes = connected_component_sizes(mask)
 
-    vessel_pixels = int(mask.sum())
-    total_pixels = int(mask.size)
-    vessel_density = vessel_pixels / total_pixels
-    vessel_density_percent = vessel_density * 100.0
+    vessel_density = float(mask.mean())
     branch_count = len(branch_sizes)
     junction_count = len(junction_sizes)
     endpoint_count = int(endpoint_pixels.sum())
@@ -276,10 +273,7 @@ def analyze_vessel_mask(image_path, threshold=127, invert=False):
         "image_path": str(image_path),
         "width": int(width),
         "height": int(height),
-        "vessel_pixels": vessel_pixels,
-        "total_pixels": total_pixels,
         "vessel_density": vessel_density,
-        "vessel_density_percent": vessel_density_percent,
         "skeleton_pixels": int(skeleton.sum()),
         "branch_count": branch_count,
         "junction_count": junction_count,
